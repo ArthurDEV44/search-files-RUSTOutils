@@ -1,74 +1,105 @@
-// Importation des bibliothèques nécessaires
-extern crate clap;
-use clap::{App, Arg};
+use clap::Parser;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+use std::fs::Metadata;
 
-// Fonction pour rechercher des fichiers selon des critères spécifiques
-fn search_files(path: &str, query: &str, extension: &str, size: u64) {
-    // Parcourir récursivement les fichiers du chemin donné
-    for entry in WalkDir::new(path)
-        .into_iter()
-        .filter_map(|e| e.ok()) { // Ignorer les erreurs potentielles lors de l'itération
+/// Structure définissant les arguments de la ligne de commande
+#[derive(Parser, Debug)]
+#[command(
+    name = "Outil de Recherche de Fichiers",
+    version = "1.1",
+    author = "ArthurDEV44",
+    about = "Recherche des fichiers par nom, extension et taille"
+)]
+struct Cli {
+    /// Chemin de recherche
+    #[arg(short, long, value_name = "PATH", parse(from_os_str))]
+    path: PathBuf,
 
-            let entry_path = entry.path();
-            // Obtenir les métadonnées du fichier, continuer si réussi
-            if let Ok(metadata) = entry_path.metadata() {
-                // Vérifier si le fichier correspond aux critères de recherche
-                if entry_path.is_file() && // Doit être un fichier
-                   entry.file_name().to_string_lossy().contains(query) && // Nom contient la requête
-                   // Vérifier l'extension si spécifiée, sinon ignorer cette condition
-                   (extension.is_empty() || entry_path.extension().map_or(false, |ext| ext == extension)) &&
-                   // Vérifier la taille si spécifiée, sinon ignorer cette condition
-                   (size == 0 || metadata.len() == size) {
-                    // Afficher le chemin du fichier qui correspond aux critères
-                    println!("{}", entry_path.display());
-                }
-            }
-        }
+    /// Terme de recherche dans le nom du fichier
+    #[arg(short, long, value_name = "QUERY")]
+    query: String,
+
+    /// Extension de fichier à rechercher (sans le point)
+    #[arg(short, long, value_name = "EXTENSION", default_value = "")]
+    extension: String,
+
+    /// Taille du fichier à rechercher (en octets)
+    #[arg(short, long, value_name = "SIZE", default_value_t = 0)]
+    size: u64,
 }
 
-// Point d'entrée principal du programme
-fn main() {
-    // Configuration de l'interface de ligne de commande
-    let matches = App::new("File Search Tool")
-        .version("1.0")
-        .author("Votre Nom")
-        .about("Recherche des fichiers par nom, extension, et taille")
-        // Configuration des arguments de l'application
-        .arg(Arg::with_name("path")
-             .short("p")
-             .long("path")
-             .value_name("PATH")
-             .help("Définit le chemin de recherche")
-             .takes_value(true)
-             .required(true))
-        .arg(Arg::with_name("query")
-             .short("q")
-             .long("query")
-             .value_name("QUERY")
-             .help("Définit le terme de recherche")
-             .takes_value(true)
-             .required(true))
-        .arg(Arg::with_name("extension")
-             .short("e")
-             .long("extension")
-             .value_name("EXTENSION")
-             .help("Définit l'extension de fichier à rechercher")
-             .takes_value(true))
-        .arg(Arg::with_name("size")
-             .short("s")
-             .long("size")
-             .value_name("SIZE")
-             .help("Définit la taille de fichier à rechercher (en octets)")
-             .takes_value(true))
-        .get_matches();
+/// Fonction principale de recherche de fichiers selon des critères spécifiques
+fn search_files(cli: &Cli) {
+    // Vérifier si le chemin est un répertoire
+    if !cli.path.is_dir() {
+        eprintln!("Le chemin spécifié n'est pas un répertoire valide.");
+        return;
+    }
 
-    // Extraction des valeurs des arguments
-    let path = matches.value_of("path").unwrap();
-    let query = matches.value_of("query").unwrap();
-    let extension = matches.value_of("extension").unwrap_or("");
-    let size = matches.value_of("size").unwrap_or("0").parse::<u64>().unwrap();
+    // Parcourir récursivement les fichiers du chemin donné
+    for entry in WalkDir::new(&cli.path)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+    {
+        let entry_path = entry.path();
+
+        // Obtenir les métadonnées du fichier
+        if let Ok(metadata) = entry_path.metadata() {
+            // Vérifier si le fichier correspond aux critères de recherche
+            if matches_criteria(entry_path, &cli.query, &cli.extension, cli.size, &metadata) {
+                // Afficher le chemin du fichier qui correspond aux critères
+                println!(
+                    "Fichier trouvé: {} | Taille: {} octets | Dernière modification: {:?}",
+                    entry_path.display(),
+                    metadata.len(),
+                    metadata.modified().ok()
+                );
+            }
+        }
+    }
+}
+
+/// Fonction pour vérifier si un fichier correspond aux critères spécifiés
+fn matches_criteria(
+    path: &Path,
+    query: &str,
+    extension: &str,
+    size: u64,
+    metadata: &Metadata,
+) -> bool {
+    // Vérifier le nom du fichier
+    if !path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map_or(false, |name| name.contains(query))
+    {
+        return false;
+    }
+
+    // Vérifier l'extension si spécifiée
+    if !extension.is_empty()
+        && path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map_or(true, |ext| ext != extension)
+    {
+        return false;
+    }
+
+    // Vérifier la taille si spécifiée
+    if size > 0 && metadata.len() != size {
+        return false;
+    }
+
+    true
+}
+
+fn main() {
+    // Analyse des arguments de la ligne de commande
+    let cli = Cli::parse();
 
     // Appel de la fonction de recherche avec les arguments spécifiés
-    search_files(path, query, extension, size);
+    search_files(&cli);
 }
